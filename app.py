@@ -1,16 +1,17 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
+import altair as alt
 
 # -------------------------------
 # Page Config
 # -------------------------------
 st.set_page_config(
-    page_title="E-Commerce Funnel Dashboard",
-    page_icon="🛍️",
+    page_title="E-commerce Funnel Dashboard",
+    page_icon="🛒",
     layout="wide"
 )
+
+st.title("📊 E-commerce Funnel Dashboard")
 
 # -------------------------------
 # Load Data
@@ -20,104 +21,110 @@ def load_data():
     df = pd.read_csv("data/sample_ecommerce_data.csv", parse_dates=["date"])
     return df
 
-df = load_data()
+raw_df = load_data()
+
+# -------------------------------
+# Transform Data for Dashboard
+# -------------------------------
+def transform_data(df):
+    # Aggregate users and revenue by stage
+    agg_df = (
+        df.groupby(["date", "city_tier", "stage"])
+          .agg({"user_id": "nunique", "amount": "sum"})
+          .reset_index()
+    )
+
+    # Pivot so each stage becomes a column
+    pivot_df = agg_df.pivot_table(
+        index=["date", "city_tier"],
+        columns="stage",
+        values=["user_id", "amount"],
+        fill_value=0
+    )
+
+    # Flatten column names
+    pivot_df.columns = [f"{metric}_{stage}" for metric, stage in pivot_df.columns]
+    pivot_df = pivot_df.reset_index()
+
+    return pivot_df
+
+df = transform_data(raw_df)
 
 # -------------------------------
 # Sidebar Filters
 # -------------------------------
 st.sidebar.header("🔎 Filters")
 
-# Date range filter
-min_date = df["date"].min().date()
-max_date = df["date"].max().date()
-date_range = st.sidebar.date_input(
-    "Select Date Range",
-    [min_date, max_date],
-    min_value=min_date,
-    max_value=max_date
+city_filter = st.sidebar.multiselect(
+    "Select City Tier(s):",
+    options=df["city_tier"].unique(),
+    default=df["city_tier"].unique()
 )
 
-# Convert to pandas Timestamps
-start_date = pd.to_datetime(date_range[0])
-end_date = pd.to_datetime(date_range[1])
-
-# City tier filter
-city_tiers = st.sidebar.multiselect(
-    "Select City Tier(s)",
-    options=sorted(df["city_tier"].unique()),
-    default=sorted(df["city_tier"].unique())
+date_range = st.sidebar.date_input(
+    "Select Date Range:",
+    [df["date"].min(), df["date"].max()]
 )
 
 # Apply filters
-df = df[
-    (df["date"].between(start_date, end_date)) &
-    (df["city_tier"].isin(city_tiers))
-]
+mask = (
+    df["city_tier"].isin(city_filter)
+    & (df["date"].between(pd.to_datetime(date_range[0]), pd.to_datetime(date_range[1])))
+)
+df_filtered = df.loc[mask]
 
 # -------------------------------
-# KPIs
+# KPI Metrics
 # -------------------------------
-st.title("🛍️ E-Commerce Funnel Dashboard")
+total_visitors = df_filtered["user_id_visit"].sum() if "user_id_visit" in df_filtered else 0
+total_orders = df_filtered["user_id_cart"].sum() if "user_id_cart" in df_filtered else 0
+total_revenue = df_filtered["amount_purchase"].sum() if "amount_purchase" in df_filtered else 0
 
 col1, col2, col3 = st.columns(3)
-
-with col1:
-    st.metric("👥 Total Visitors", f"{df['visitors'].sum():,}")
-with col2:
-    st.metric("🛒 Total Orders", f"{df['orders'].sum():,}")
-with col3:
-    st.metric("💰 Total Revenue", f"₹{df['revenue'].sum():,.0f}")
-
-st.markdown("---")
+col1.metric("👥 Total Visitors", f"{total_visitors:,}")
+col2.metric("🛒 Total Orders (Cart Adds)", f"{total_orders:,}")
+col3.metric("💰 Total Revenue", f"₹{total_revenue:,.0f}")
 
 # -------------------------------
-# Funnel by City Tier
+# Funnel Chart
 # -------------------------------
-st.subheader("📊 Funnel by City Tier")
+st.subheader("📉 Funnel Conversion by Stage")
 
-funnel_df = df.groupby("city_tier")[["visitors", "orders"]].sum().reset_index()
-funnel_df["conversion_rate"] = funnel_df["orders"] / funnel_df["visitors"] * 100
+funnel_data = {
+    "Stage": ["Visit", "Cart", "Purchase"],
+    "Users": [
+        total_visitors,
+        total_orders,
+        df_filtered["user_id_purchase"].sum() if "user_id_purchase" in df_filtered else 0
+    ]
+}
+funnel_df = pd.DataFrame(funnel_data)
 
-fig_funnel = go.Figure(go.Funnel(
-    y=funnel_df["city_tier"],
-    x=funnel_df["visitors"],
-    textinfo="value+percent initial",
-    name="Visitors"
-))
-fig_funnel.add_trace(go.Funnel(
-    y=funnel_df["city_tier"],
-    x=funnel_df["orders"],
-    textinfo="value+percent initial",
-    name="Orders"
-))
-st.plotly_chart(fig_funnel, use_container_width=True)
+funnel_chart = alt.Chart(funnel_df).mark_bar().encode(
+    x=alt.X("Stage", sort=["Visit", "Cart", "Purchase"]),
+    y="Users",
+    color="Stage"
+).properties(width=600)
+
+st.altair_chart(funnel_chart, use_container_width=True)
 
 # -------------------------------
 # Revenue Trend
 # -------------------------------
-st.subheader("📈 Revenue Trend Over Time")
+st.subheader("📈 Revenue Over Time")
 
-revenue_trend = df.groupby("date")["revenue"].sum().reset_index()
-fig_revenue = px.line(revenue_trend, x="date", y="revenue", title="Daily Revenue")
-st.plotly_chart(fig_revenue, use_container_width=True)
+if "amount_purchase" in df_filtered:
+    revenue_trend = (
+        df_filtered.groupby("date")["amount_purchase"]
+        .sum()
+        .reset_index()
+    )
 
-# -------------------------------
-# Conversion Rate by City Tier
-# -------------------------------
-st.subheader("🏙️ Conversion Rate by City Tier")
+    revenue_chart = alt.Chart(revenue_trend).mark_line(point=True).encode(
+        x="date:T",
+        y="amount_purchase:Q"
+    ).properties(width=800)
 
-fig_conv = px.bar(
-    funnel_df,
-    x="city_tier",
-    y="conversion_rate",
-    text="conversion_rate",
-    title="Conversion Rate (%)",
-    labels={"conversion_rate": "Conversion Rate (%)"}
-)
-st.plotly_chart(fig_conv, use_container_width=True)
-
-# -------------------------------
-# Raw Data Toggle
-# -------------------------------
-with st.expander("📄 View Raw Data"):
-    st.dataframe(df)
+    st.altair_chart(revenue_chart, use_container_width=True)
+else:
+    st.info("No purchase data available for the selected filters.")
