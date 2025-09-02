@@ -76,7 +76,8 @@ if df.empty:
 # -------------------------------
 st.sidebar.header("🔎 Filters")
 
-city_filter = st.sidebar.multoselect(
+# FIX: Corrected typo from multoselect to multiselect
+city_filter = st.sidebar.multiselect(
     "Select City Tier(s):",
     options=df["city_tier"].unique(),
     default=df["city_tier"].unique()
