@@ -4,43 +4,47 @@ import numpy as np
 import random
 from datetime import datetime, timedelta
 
-random.seed(42)
-np.random.seed(42)
+# -------------------------------
+# Config
+# -------------------------------
+NUM_USERS = 2000
+DAYS = 60
+CITY_TIERS = ["Tier-1", "Tier-2", "Tier-3"]
 
-N_SESSIONS = 20000
-start = datetime(2025,1,1)
+# -------------------------------
+# Generate synthetic dataset
+# -------------------------------
+def generate_data():
+    data = []
+    start_date = datetime.today() - timedelta(days=DAYS)
 
-categories = ["fashion","home","beauty","electronics","mobiles"]
-city_tiers = [1,2,3]
+    for user_id in range(1, NUM_USERS + 1):
+        city_tier = np.random.choice(CITY_TIERS, p=[0.3, 0.4, 0.3])  # More Tier-2 focus
+        visits = random.randint(1, 5)  # how many sessions
+        for _ in range(visits):
+            date = start_date + timedelta(days=random.randint(0, DAYS))
+            
+            # Stage 1: visited
+            data.append([user_id, city_tier, "visited", 0, date])
+            
+            # Stage 2: add to cart (probability)
+            if np.random.rand() < 0.6:  
+                data.append([user_id, city_tier, "added_to_cart", 0, date])
+                
+                # Stage 3: purchased (probability)
+                if np.random.rand() < 0.4:
+                    amount = random.randint(200, 2000)
+                    data.append([user_id, city_tier, "purchased", amount, date])
+                    
+                    # Repeat purchase chance
+                    if np.random.rand() < 0.2:
+                        amount2 = random.randint(200, 2000)
+                        data.append([user_id, city_tier, "purchased", amount2, date + timedelta(days=random.randint(1,5))])
+    
+    df = pd.DataFrame(data, columns=["user_id", "city_tier", "stage", "amount", "date"])
+    return df
 
-rows = []
-for s in range(1, N_SESSIONS+1):
-    session_id = f"S{s}"
-    user_id = random.randint(1,6000)
-    seller_id = random.randint(1,800)
-    category = random.choice(categories)
-    city_tier = random.choices(city_tiers, weights=[0.5,0.3,0.2])[0]
-    ts = start + timedelta(days=random.randint(0,180), seconds=random.randint(0,86400))
-    price = round(max(30, np.random.exponential(800)),2)
-    # events probabilities (tweak if you want)
-    saw = True
-    added = np.random.rand() < 0.28
-    checkout = added and (np.random.rand() < 0.45)
-    purchased = checkout and (np.random.rand() < 0.6)
-
-    # view
-    rows.append({
-        "session_id": session_id, "user_id": user_id, "seller_id": seller_id,
-        "category": category, "city_tier": city_tier, "event":"view", "timestamp": ts, "order_value": None
-    })
-    if added:
-        rows.append({**rows[-1], "event":"add_to_cart", "timestamp": ts + timedelta(seconds=30)})
-    if checkout:
-        rows.append({**rows[-1], "event":"checkout_start", "timestamp": ts + timedelta(seconds=90)})
-    if purchased:
-        rows.append({**rows[-1], "event":"purchase", "timestamp": ts + timedelta(seconds=180), "order_value": price})
-
-df = pd.DataFrame(rows)
-df = df.sort_values("timestamp")
-df.to_csv("data/events.csv", index=False)
-print("Saved data/events.csv with", df['session_id'].nunique(), "sessions and", len(df), "rows")
+if __name__ == "__main__":
+    df = generate_data()
+    df.to_csv("data/sample_ecommerce_data.csv", index=False)
+    print("✅ Sample data generated and saved to data/sample_ecommerce_data.csv")
