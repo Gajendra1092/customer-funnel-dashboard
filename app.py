@@ -1,4 +1,3 @@
-# app.py
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -8,7 +7,7 @@ import plotly.graph_objects as go
 # Page Config
 # -------------------------------
 st.set_page_config(
-    page_title="E-commerce BA Dashboard",
+    page_title="E-Commerce Funnel Dashboard",
     page_icon="🛍️",
     layout="wide"
 )
@@ -27,105 +26,98 @@ df = load_data()
 # Sidebar Filters
 # -------------------------------
 st.sidebar.header("🔎 Filters")
-city_tiers = st.sidebar.multiselect(
-    "Select City Tier(s):",
-    options=df["city_tier"].unique(),
-    default=df["city_tier"].unique()
-)
 
+# Date range filter
+min_date = df["date"].min().date()
+max_date = df["date"].max().date()
 date_range = st.sidebar.date_input(
-    "Select Date Range:",
-    [df["date"].min(), df["date"].max()]
+    "Select Date Range",
+    [min_date, max_date],
+    min_value=min_date,
+    max_value=max_date
 )
 
-filtered_df = df[
-    (df["city_tier"].isin(city_tiers)) &
-    (df["date"].between(date_range[0], date_range[1]))
+# Convert to pandas Timestamps
+start_date = pd.to_datetime(date_range[0])
+end_date = pd.to_datetime(date_range[1])
+
+# City tier filter
+city_tiers = st.sidebar.multiselect(
+    "Select City Tier(s)",
+    options=sorted(df["city_tier"].unique()),
+    default=sorted(df["city_tier"].unique())
+)
+
+# Apply filters
+df = df[
+    (df["date"].between(start_date, end_date)) &
+    (df["city_tier"].isin(city_tiers))
 ]
 
 # -------------------------------
-# KPI Section
+# KPIs
 # -------------------------------
-st.title("🛍️ E-commerce Business Analysis Dashboard")
-st.markdown("### Key Performance Indicators")
+st.title("🛍️ E-Commerce Funnel Dashboard")
 
-col1, col2, col3, col4 = st.columns(4)
+col1, col2, col3 = st.columns(3)
 
-total_users = filtered_df["user_id"].nunique()
-purchased_users = filtered_df[filtered_df["stage"] == "purchased"]["user_id"].nunique()
-conversion_rate = round((purchased_users / total_users) * 100, 2) if total_users else 0
-revenue = filtered_df[filtered_df["stage"] == "purchased"]["amount"].sum()
-aov = round(revenue / purchased_users, 2) if purchased_users else 0
+with col1:
+    st.metric("👥 Total Visitors", f"{df['visitors'].sum():,}")
+with col2:
+    st.metric("🛒 Total Orders", f"{df['orders'].sum():,}")
+with col3:
+    st.metric("💰 Total Revenue", f"₹{df['revenue'].sum():,.0f}")
 
-col1.metric("👥 Total Users", total_users)
-col2.metric("✅ Conversion Rate", f"{conversion_rate}%")
-col3.metric("💰 Revenue", f"₹{revenue:,.0f}")
-col4.metric("📦 Avg Order Value", f"₹{aov:,.0f}")
+st.markdown("---")
 
 # -------------------------------
-# Funnel Visualization
+# Funnel by City Tier
 # -------------------------------
-st.markdown("### 📊 Funnel Analysis by Stage")
+st.subheader("📊 Funnel by City Tier")
 
-funnel_counts = (
-    filtered_df.groupby("stage")["user_id"]
-    .nunique()
-    .reindex(["visited", "added_to_cart", "purchased"])
-    .fillna(0)
-)
+funnel_df = df.groupby("city_tier")[["visitors", "orders"]].sum().reset_index()
+funnel_df["conversion_rate"] = funnel_df["orders"] / funnel_df["visitors"] * 100
 
 fig_funnel = go.Figure(go.Funnel(
-    y=funnel_counts.index,
-    x=funnel_counts.values,
-    textinfo="value+percent initial"
+    y=funnel_df["city_tier"],
+    x=funnel_df["visitors"],
+    textinfo="value+percent initial",
+    name="Visitors"
+))
+fig_funnel.add_trace(go.Funnel(
+    y=funnel_df["city_tier"],
+    x=funnel_df["orders"],
+    textinfo="value+percent initial",
+    name="Orders"
 ))
 st.plotly_chart(fig_funnel, use_container_width=True)
 
 # -------------------------------
-# City Tier Comparison
+# Revenue Trend
 # -------------------------------
-st.markdown("### 🏙️ City Tier Comparison")
+st.subheader("📈 Revenue Trend Over Time")
 
-city_funnel = (
-    filtered_df.groupby(["city_tier", "stage"])["user_id"]
-    .nunique()
-    .reset_index()
-    .pivot(index="city_tier", columns="stage", values="user_id")
-    .fillna(0)
+revenue_trend = df.groupby("date")["revenue"].sum().reset_index()
+fig_revenue = px.line(revenue_trend, x="date", y="revenue", title="Daily Revenue")
+st.plotly_chart(fig_revenue, use_container_width=True)
+
+# -------------------------------
+# Conversion Rate by City Tier
+# -------------------------------
+st.subheader("🏙️ Conversion Rate by City Tier")
+
+fig_conv = px.bar(
+    funnel_df,
+    x="city_tier",
+    y="conversion_rate",
+    text="conversion_rate",
+    title="Conversion Rate (%)",
+    labels={"conversion_rate": "Conversion Rate (%)"}
 )
-
-fig_city = px.bar(
-    city_funnel,
-    barmode="group",
-    title="Stage-wise Comparison by City Tier"
-)
-st.plotly_chart(fig_city, use_container_width=True)
+st.plotly_chart(fig_conv, use_container_width=True)
 
 # -------------------------------
-# Conversion Trend Over Time
+# Raw Data Toggle
 # -------------------------------
-st.markdown("### 📈 Conversion Trend Over Time")
-
-trend_df = (
-    filtered_df.groupby("date")
-    .agg(total_users=("user_id", "nunique"),
-         purchased_users=("user_id", lambda x: (filtered_df.loc[x.index, "stage"] == "purchased").sum()))
-    .reset_index()
-)
-trend_df["conversion_rate"] = trend_df["purchased_users"] / trend_df["total_users"]
-
-fig_trend = px.line(
-    trend_df, x="date", y="conversion_rate",
-    title="Daily Conversion Rate"
-)
-st.plotly_chart(fig_trend, use_container_width=True)
-
-# -------------------------------
-# User Journey Drilldown
-# -------------------------------
-st.markdown("### 🔍 User Journey Drilldown")
-
-user_id = st.selectbox("Select a User ID", filtered_df["user_id"].unique())
-journey = filtered_df[filtered_df["user_id"] == user_id].sort_values("date")
-
-st.write(journey[["date", "stage", "amount", "city_tier"]])
+with st.expander("📄 View Raw Data"):
+    st.dataframe(df)
